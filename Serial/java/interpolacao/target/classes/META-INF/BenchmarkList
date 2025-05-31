@@ -1,0 +1,2 @@
+JMH S 30 com.imd.benckmark.IDWBenchmark S 79 com.imd.benckmark.jmh_generated.IDWBenchmark_benchmarkAtualizarVizinhos_jmhTest S 26 benchmarkAtualizarVizinhos S 11 AverageTime E A 1 1 1 E E E E E E E E E E E E E E U 12 MILLISECONDS E E 
+JMH S 30 com.imd.benckmark.IDWBenchmark S 72 com.imd.benckmark.jmh_generated.IDWBenchmark_benchmarkInterpolar_jmhTest S 19 benchmarkInterpolar S 11 AverageTime E A 1 1 1 E E E E E E E E E E E E E E U 12 MILLISECONDS E E 

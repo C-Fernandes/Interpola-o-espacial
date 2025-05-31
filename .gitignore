@@ -1,0 +1,5 @@
+# Ignora o arquivo de saída
+saida_interpolacao.txt
+
+# Ignora o arquivo do dataset
+dataset.csv
