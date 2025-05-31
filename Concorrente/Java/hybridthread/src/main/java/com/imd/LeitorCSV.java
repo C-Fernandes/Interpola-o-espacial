@@ -13,12 +13,13 @@ import java.util.concurrent.Future;
 import java.util.stream.Collectors;
 
 public class LeitorCSV {
-    // 1) Aqui criamos um executor que aloca uma Virtual Thread para cada tarefa.
-    // (Java 21+)
-    private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+    // Executor para tarefas de I/O (virtual threads)
+    private final ExecutorService iosExecutor = Executors.newThreadPerTaskExecutor(Thread.ofVirtual().factory());
+    // Executor para tarefas de cálculo intensivo (platform threads)
+    private final ExecutorService cpuExecutor = Executors
+            .newFixedThreadPool(Runtime.getRuntime().availableProcessors());
 
     private final InversoDistanciaPonderada idw = new InversoDistanciaPonderada();
-
     private final int p = 2; // expoente
     private final int k = 5; // número de vizinhos
 
@@ -28,18 +29,12 @@ public class LeitorCSV {
         String dataMomento = "";
 
         try (BufferedReader br = new BufferedReader(new FileReader(caminhoCSV))) {
-            // Pula cabeçalho (assumindo que há pelo menos uma linha)
+            // Pula o cabeçalho
             br.readLine();
 
             String linha;
             while ((linha = br.readLine()) != null) {
                 String[] campos = linha.split(",");
-                if (campos.length < 6) {
-                    // Linha malformada, simplesmente ignora
-                    System.err.println("Linha malformada (menos de 6 campos): " + linha);
-                    continue;
-                }
-
                 String data = campos[1];
                 String hora = campos[2];
                 double temp = Double.parseDouble(campos[3]);
@@ -48,46 +43,47 @@ public class LeitorCSV {
 
                 Ponto ponto = new Ponto(lat, lon, temp, data, hora);
 
-                // Inicializa dataMomento na primeira iteração
                 if (dataMomento.isEmpty()) {
                     dataMomento = data;
                 }
 
-                // Se mudou de data, processa o lote do dia anterior
+                // Se mudou de data, submeter o lote anterior para processamento
                 if (!dataMomento.equals(data)) {
                     if (!precisaInterpolar.isEmpty() && !pontosValidos.isEmpty()) {
-                        processaEDisparaGravacao(
-                                dataMomento,
-                                new ArrayList<>(precisaInterpolar),
-                                new ArrayList<>(pontosValidos));
+                        String dataParaProcessar = dataMomento;
+                        List<Ponto> listaInterpCopy = new ArrayList<>(precisaInterpolar);
+                        List<Ponto> listaValidosCopy = new ArrayList<>(pontosValidos);
+
+                        processaEDisparaGravacao(dataParaProcessar, listaInterpCopy, listaValidosCopy);
                     }
-                    // Limpa listas para o novo dia
                     pontosValidos.clear();
                     precisaInterpolar.clear();
                     dataMomento = data;
                 }
 
                 // Classifica o ponto atual
-                if (temp == -9999.00) {
+                if (Double.compare(temp, -9999.00) == 0) {
                     precisaInterpolar.add(ponto);
                 } else {
                     pontosValidos.add(ponto);
                 }
             }
 
-            // Processa o último dia remanescente
+            // Processa o último dia remanescente (caso ainda haja pontos pendentes)
             if (!precisaInterpolar.isEmpty() && !pontosValidos.isEmpty()) {
-                processaEDisparaGravacao(
-                        dataMomento,
-                        new ArrayList<>(precisaInterpolar),
-                        new ArrayList<>(pontosValidos));
+                String dataParaProcessar = dataMomento;
+                List<Ponto> listaInterpCopy = new ArrayList<>(precisaInterpolar);
+                List<Ponto> listaValidosCopy = new ArrayList<>(pontosValidos);
+
+                processaEDisparaGravacao(dataParaProcessar, listaInterpCopy, listaValidosCopy);
             }
 
         } catch (IOException e) {
             System.err.println("Erro ao ler arquivo CSV: " + e.getMessage());
         } finally {
-            // Após submeter todas as tarefas e gravações, podemos desligar o executor
-            executor.shutdown();
+            // Aguarda a conclusão de todas as tarefas de I/O e de CPU antes de encerrar
+            iosExecutor.shutdown();
+            cpuExecutor.shutdown();
         }
     }
 
@@ -96,13 +92,13 @@ public class LeitorCSV {
             List<Ponto> listaInterp,
             List<Ponto> listaValidos) {
 
-        // 1) Submete cada interpolação ao executor de Virtual Threads e guarda o Future
+        // 1) Submete cada interpolação ao pool de platform threads e guarda o Future
         List<Future<String>> futures = new ArrayList<>(listaInterp.size());
         for (Ponto alvo : listaInterp) {
-            Future<String> future = executor.submit(() -> {
-                String horaAlvo = alvo.getHora();
+            Future<String> future = cpuExecutor.submit(() -> {
+                // Filtra candidatos do mesmo horário
                 List<Ponto> candidatos = listaValidos.stream()
-                        .filter(v -> v.getHora().equals(horaAlvo))
+                        .filter(v -> v.getHora().equals(alvo.getHora()))
                         .collect(Collectors.toList());
 
                 Ponto comVizinhos = idw.atualizarVizinhosMaisProximos(alvo, candidatos, k);
@@ -150,8 +146,8 @@ public class LeitorCSV {
 
         // 3) Agora que temos todas as strings formatadas de interpolação na ordem
         // correta,
-        // delegamos a gravação para outra Virtual Thread (I/O)
-        executor.submit(() -> {
+        // delegamos a gravação para outra virtual thread (I/O)
+        iosExecutor.submit(() -> {
             try (BufferedWriter bw = new BufferedWriter(
                     new FileWriter("saida_interpolacao.txt", true))) {
                 bw.write(String.format("=== RESULTADOS DO DIA %s ===%n", data));
