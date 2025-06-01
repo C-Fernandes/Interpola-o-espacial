@@ -10,6 +10,7 @@ public class InversoDistanciaPonderada {
             Ponto alvo,
             List<Ponto> candidatos,
             int k) {
+        // 1) Criamos uma lista temporária para ordenar (não mexer na lista original)
         List<Ponto> copia = new ArrayList<>(candidatos);
 
         // 2) Ordena 'copia' pelo critério de distância geográfica ao 'alvo'

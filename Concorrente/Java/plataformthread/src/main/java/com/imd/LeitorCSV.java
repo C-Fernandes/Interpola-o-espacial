@@ -7,8 +7,6 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorCompletionService;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -92,11 +90,10 @@ public class LeitorCSV {
             List<Ponto> listaInterp,
             List<Ponto> listaValidos) {
 
-        ExecutorCompletionService<String> completionService = new ExecutorCompletionService<>(executor);
-
-        // 1) Submete todas as tarefas individualmente
+        // 1) Submete cada interpolação ao pool de platform threads e guarda o Future
+        List<Future<String>> futures = new ArrayList<>(listaInterp.size());
         for (Ponto alvo : listaInterp) {
-            completionService.submit(() -> {
+            Future<String> future = executor.submit(() -> {
                 String horaAlvo = alvo.getHora();
                 List<Ponto> candidatos = listaValidos.stream()
                         .filter(v -> v.getHora().equals(horaAlvo))
@@ -129,21 +126,23 @@ public class LeitorCSV {
                 sb.append("\n");
                 return sb.toString();
             });
+
+            futures.add(future);
         }
 
-        // 2) Coleta os resultados à medida que vão ficando prontos
-        List<String> todasLinhas = new ArrayList<>();
-        for (int i = 0; i < listaInterp.size(); i++) {
+        // 2) Coleta os resultados NA ORDEM em que foram submetidos (chamando get())
+        List<String> todasLinhas = new ArrayList<>(listaInterp.size());
+        for (Future<String> f : futures) {
             try {
-                Future<String> futuro = completionService.take(); // bloqueia até terminar uma tarefa
-                todasLinhas.add(futuro.get());
-            } catch (InterruptedException | ExecutionException e) {
+                todasLinhas.add(f.get()); // bloqueia até o cálculo correspondente terminar
+            } catch (InterruptedException | java.util.concurrent.ExecutionException e) {
                 System.err.println("Erro ao processar tarefa de interpolação: " + e.getMessage());
                 Thread.currentThread().interrupt();
+                todasLinhas.add(">> Erro na interpolação deste ponto.\n");
             }
         }
 
-        // 3) Grava os resultados com o mesmo pool
+        // 3) Grava os resultados em arquivo, usando o mesmo pool de platform threads
         executor.submit(() -> {
             try (BufferedWriter bw = new BufferedWriter(
                     new FileWriter("saida_interpolacao.txt", true))) {
@@ -156,8 +155,6 @@ public class LeitorCSV {
                 System.err.println("Erro ao gravar dados do dia " + data + ": " + e.getMessage());
             }
         });
-
-        // Se você não for reutilizar mais o executor, pode encerrar aqui:
-        // executor.shutdown();
     }
+
 }
