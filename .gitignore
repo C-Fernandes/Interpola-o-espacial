@@ -3,3 +3,17 @@ saida_interpolacao.txt
 
 # Ignora o arquivo do dataset
 dataset.csv
+
+*.csv
+*.txt
+# Ignorar pastas de build do Maven e Gradle
+/target/
+/build/
+
+# Ignorar arquivos de log
+*.log
+
+# Ignorar arquivos do IDE
+.idea/
+*.iml
+.vscode/
