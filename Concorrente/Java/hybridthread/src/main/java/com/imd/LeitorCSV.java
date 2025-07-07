@@ -7,17 +7,22 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 public class LeitorCSV {
-    // Executor para tarefas de I/O (virtual threads)
-    private final ExecutorService iosExecutor = Executors.newThreadPerTaskExecutor(Thread.ofVirtual().factory());
-    // Executor para tarefas de cálculo intensivo (platform threads)
-    private final ExecutorService cpuExecutor = Executors
+
+    // 1) Executor para interpolação: pool fixo de platform threads
+    private final ExecutorService interpExecutor = Executors
             .newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+
+    // 2) Executor para escrita em arquivo: cada tarefa em uma virtual thread
+    private final ExecutorService ioExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
     private final InversoDistanciaPonderada idw = new InversoDistanciaPonderada();
     private final int p = 2; // expoente
@@ -29,12 +34,13 @@ public class LeitorCSV {
         String dataMomento = "";
 
         try (BufferedReader br = new BufferedReader(new FileReader(caminhoCSV))) {
-            // Pula o cabeçalho
+
             br.readLine();
 
             String linha;
             while ((linha = br.readLine()) != null) {
                 String[] campos = linha.split(",");
+
                 String data = campos[1];
                 String hora = campos[2];
                 double temp = Double.parseDouble(campos[3]);
@@ -45,112 +51,104 @@ public class LeitorCSV {
 
                 if (dataMomento.isEmpty()) {
                     dataMomento = data;
-                }
-
-                // Se mudou de data, submeter o lote anterior para processamento
-                if (!dataMomento.equals(data)) {
-                    if (!precisaInterpolar.isEmpty() && !pontosValidos.isEmpty()) {
-                        String dataParaProcessar = dataMomento;
-                        List<Ponto> listaInterpCopy = new ArrayList<>(precisaInterpolar);
-                        List<Ponto> listaValidosCopy = new ArrayList<>(pontosValidos);
-
-                        processaEDisparaGravacao(dataParaProcessar, listaInterpCopy, listaValidosCopy);
-                    }
-                    pontosValidos.clear();
+                } else if (!dataMomento.equals(data)) {
+                    processarLote(dataMomento, precisaInterpolar, pontosValidos);
                     precisaInterpolar.clear();
+                    pontosValidos.clear();
                     dataMomento = data;
                 }
 
-                // Classifica o ponto atual
-                if (Double.compare(temp, -9999.00) == 0) {
+                if (temp == -9999.00) {
                     precisaInterpolar.add(ponto);
                 } else {
                     pontosValidos.add(ponto);
                 }
             }
 
-            // Processa o último dia remanescente (caso ainda haja pontos pendentes)
             if (!precisaInterpolar.isEmpty() && !pontosValidos.isEmpty()) {
-                String dataParaProcessar = dataMomento;
-                List<Ponto> listaInterpCopy = new ArrayList<>(precisaInterpolar);
-                List<Ponto> listaValidosCopy = new ArrayList<>(pontosValidos);
-
-                processaEDisparaGravacao(dataParaProcessar, listaInterpCopy, listaValidosCopy);
+                processarLote(dataMomento, precisaInterpolar, pontosValidos);
             }
 
         } catch (IOException e) {
             System.err.println("Erro ao ler arquivo CSV: " + e.getMessage());
         } finally {
-            // Aguarda a conclusão de todas as tarefas de I/O e de CPU antes de encerrar
-            iosExecutor.shutdown();
-            cpuExecutor.shutdown();
+            System.out.println("Iniciando desligamento do pool de interpolação...");
+            interpExecutor.shutdown();
+            try {
+                if (!interpExecutor.awaitTermination(60, TimeUnit.MINUTES)) {
+                    System.err.println("Pool de interpolação não terminou no tempo esperado. Forçando o desligamento.");
+                    interpExecutor.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                System.err.println("A espera pelo término do pool de interpolação foi interrompida.");
+                interpExecutor.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+            System.out.println("Pool de interpolação desligado.");
+
+            System.out.println("Iniciando desligamento do pool de I/O...");
+            ioExecutor.shutdown();
+            try {
+                if (!ioExecutor.awaitTermination(60, TimeUnit.MINUTES)) {
+                    System.err.println("Pool de I/O não terminou no tempo esperado. Forçando o desligamento.");
+                    ioExecutor.shutdownNow(); // Tenta cancelar as tarefas em execução.
+                }
+            } catch (InterruptedException e) {
+                System.err.println("A espera pelo término do pool de I/O foi interrompida.");
+                ioExecutor.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+            System.out.println("Pool de I/O desligado.");
         }
     }
 
-    private void processaEDisparaGravacao(
+    public void processarLote(
             String data,
             List<Ponto> listaInterp,
             List<Ponto> listaValidos) {
 
-        // 1) Submete cada interpolação ao pool de platform threads e guarda o Future
+        // 1) Submete cada interpolação em platform thread (pool fixo)
         List<Future<String>> futures = new ArrayList<>(listaInterp.size());
         for (Ponto alvo : listaInterp) {
-            Future<String> future = cpuExecutor.submit(() -> {
-                // Filtra candidatos do mesmo horário
+            Callable<String> tarefaInterp = () -> {
                 List<Ponto> candidatos = listaValidos.stream()
                         .filter(v -> v.getHora().equals(alvo.getHora()))
                         .collect(Collectors.toList());
 
+                // Atualiza vizinhos e faz interpolação
                 Ponto comVizinhos = idw.atualizarVizinhosMaisProximos(alvo, candidatos, k);
                 double valorInterp = idw.interpolarComVizinhos(comVizinhos, p);
 
-                StringBuilder sb = new StringBuilder();
-                sb.append(String.format(
-                        ">>> Interpolando ponto em %s %s (%.4f, %.4f)%n",
+                // Monta uma linha de saída
+                return String.format(
+                        "Ponto: %s %s (%.4f, %.4f)%n | Temperatura interpolada: %.2f°C%n",
                         comVizinhos.getData(),
                         comVizinhos.getHora(),
                         comVizinhos.getLatitude(),
-                        comVizinhos.getLongitude()));
-                sb.append(String.format(
-                        "Temperatura original: %.2f | Temperatura interpolada: %.2f°C%n",
-                        comVizinhos.getTemperatura(),
-                        valorInterp));
-                sb.append("Pontos usados na interpolação:\n");
-                for (Ponto viz : comVizinhos.getPontosProximos()) {
-                    sb.append(String.format(
-                            "- (%.4f, %.4f) | Temp: %.2f | Data: %s Hora: %s%n",
-                            viz.getLatitude(),
-                            viz.getLongitude(),
-                            viz.getTemperatura(),
-                            viz.getData(),
-                            viz.getHora()));
-                }
-                sb.append("\n");
-                return sb.toString();
-            });
+                        comVizinhos.getLongitude(),
+                        valorInterp);
+            };
 
-            futures.add(future);
+            futures.add(interpExecutor.submit(tarefaInterp));
         }
 
-        // 2) Coleta os resultados NA ORDEM em que foram submetidos (chamando get())
+        // 2) Coleta todas as strings, em ordem de submissão
         List<String> todasLinhas = new ArrayList<>(listaInterp.size());
         for (Future<String> f : futures) {
             try {
-                todasLinhas.add(f.get()); // bloqueia até o cálculo correspondente terminar
-            } catch (InterruptedException | java.util.concurrent.ExecutionException e) {
-                System.err.println("Erro ao processar tarefa de interpolação: " + e.getMessage());
+                todasLinhas.add(f.get());
+            } catch (InterruptedException | ExecutionException e) {
+                System.err.println("Erro ao processar interpolação: " + e.getMessage());
                 Thread.currentThread().interrupt();
                 todasLinhas.add(">> Erro na interpolação deste ponto.\n");
             }
         }
 
-        // 3) Agora que temos todas as strings formatadas de interpolação na ordem
-        // correta,
-        // delegamos a gravação para outra virtual thread (I/O)
-        iosExecutor.submit(() -> {
+        // 3) Escreve em arquivo usando virtual thread
+        ioExecutor.submit(() -> {
             try (BufferedWriter bw = new BufferedWriter(
                     new FileWriter("saida_interpolacao.txt", true))) {
-                bw.write(String.format("=== RESULTADOS DO DIA %s ===%n", data));
+
                 for (String linhaParaGravar : todasLinhas) {
                     bw.write(linhaParaGravar);
                 }
@@ -160,4 +158,5 @@ public class LeitorCSV {
             }
         });
     }
+
 }

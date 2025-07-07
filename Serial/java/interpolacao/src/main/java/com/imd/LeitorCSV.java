@@ -6,24 +6,24 @@ import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Formatter;
 import java.util.List;
-import java.util.stream.Collectors;
+import java.util.Locale;
 
 public class LeitorCSV {
-    InversoDistanciaPonderada idw = new InversoDistanciaPonderada();
+
+    private final InversoDistanciaPonderada idw = new InversoDistanciaPonderada();
+    private final int p = 2; // expoente
+    private final int k = 5; // número de vizinhos
 
     public void lerEInterpolar(String caminhoCSV) {
-        int p = 2; // expoente do IDW
-        int k = 5; // número de vizinhos a considerar
-
         List<Ponto> precisaInterpolar = new ArrayList<>();
         List<Ponto> pontosValidos = new ArrayList<>();
         String dataMomento = "";
 
-        try (
-                BufferedReader br = new BufferedReader(new FileReader(caminhoCSV));
-                BufferedWriter bw = new BufferedWriter(new FileWriter("saida_interpolacao.txt"))) {
-            br.readLine(); // Ignora cabeçalho
+        try (BufferedReader br = new BufferedReader(new FileReader(caminhoCSV))) {
+
+            br.readLine();
 
             String linha;
             while ((linha = br.readLine()) != null) {
@@ -37,68 +37,81 @@ public class LeitorCSV {
 
                 Ponto ponto = new Ponto(lat, lon, temp, data, hora);
 
-                // Se for a primeira iteração (dataMomento == "") ou se a data mudou
-                if (dataMomento.isEmpty() || !dataMomento.equals(data)) {
-                    // Processa todos os pontos pendentes do dia anterior
-                    if (!precisaInterpolar.isEmpty()) {
-                        for (Ponto alvo : precisaInterpolar) {
-                            // 1) filtra apenas pontos válidos com a mesma hora do "alvo"
-                            final String horaAlvo = alvo.getHora();
-                            List<Ponto> candidatos = pontosValidos.stream()
-                                    .filter(v -> v.getHora().equals(horaAlvo))
-                                    .collect(Collectors.toList());
+                if (dataMomento.isEmpty()) {
+                    dataMomento = data;
+                } else if (!dataMomento.equals(data)) {
+                    processarLote(dataMomento, precisaInterpolar, pontosValidos);
 
-                            // 2) obtém os k vizinhos mais próximos de uma só vez
-                            alvo = idw.atualizarVizinhosMaisProximos(alvo, candidatos, k);
-
-                            // 3) faz a interpolação e IMPRIME imediatamente em seguida
-                            double valorInterpolado = idw.interpolarComVizinhos(alvo, p);
-
-                            bw.write(String.format(
-                                    ">>> Interpolando ponto em %s %s (%.4f, %.4f)%n",
-                                    alvo.getData(),
-                                    alvo.getHora(),
-                                    alvo.getLatitude(),
-                                    alvo.getLongitude()));
-                            bw.write(String.format(
-                                    "Temperatura original: %.2f | Temperatura interpolada: %.2f°C%n",
-                                    alvo.getTemperatura(),
-                                    valorInterpolado));
-                            bw.write("Pontos usados na interpolação:\n");
-                            for (Ponto viz : alvo.getPontosProximos()) {
-                                bw.write(String.format(
-                                        "- (%.4f, %.4f) | Temp: %.2f | Data: %s Hora: %s%n",
-                                        viz.getLatitude(),
-                                        viz.getLongitude(),
-                                        viz.getTemperatura(),
-                                        viz.getData(),
-                                        viz.getHora()));
-                            }
-                            bw.write("\n");
-                        }
-                    }
-
-                    // Depois de imprimir o dia anterior, limpa as listas e atualiza dataMomento
-                    pontosValidos.clear();
                     precisaInterpolar.clear();
+                    pontosValidos.clear();
                     dataMomento = data;
                 }
 
-                // A seguir, armazena o ponto atual no lugar correto
                 if (temp == -9999.00) {
                     precisaInterpolar.add(ponto);
                 } else {
                     pontosValidos.add(ponto);
                 }
-            } // fim do while
+            }
 
-            // NÃO há mais bloco de impressão aqui: todas as interpolações
-            // já foram escritas assim que cada ponto foi calculado.
+            if (!precisaInterpolar.isEmpty() && !pontosValidos.isEmpty()) {
+                processarLote(dataMomento, precisaInterpolar, pontosValidos);
+            }
 
-            bw.close();
-            br.close();
         } catch (IOException e) {
-            System.err.println("Erro ao ler ou escrever arquivo: " + e.getMessage());
+            System.err.println("Erro ao ler arquivo CSV: " + e.getMessage());
+        }
+    }
+
+    public void processarLote(
+            String data,
+            List<Ponto> listaInterp,
+            List<Ponto> listaValidos) {
+
+        List<String> todasLinhas = new ArrayList<>();
+
+        for (Ponto alvo : listaInterp) {
+            List<Ponto> candidatos = new ArrayList<>();
+            for (Ponto v : listaValidos) {
+                if (v.getHora().equals(alvo.getHora())) {
+                    candidatos.add(v);
+                }
+            }
+
+            Ponto comVizinhos = idw.atualizarVizinhosMaisProximos(alvo, candidatos, k);
+            double valorInterp = idw.interpolarComVizinhos(comVizinhos, p);
+            StringBuilder sb = new StringBuilder(512);
+            Formatter fmt = new Formatter(sb, Locale.ROOT);
+
+            fmt.format(
+                    ">>> Interpolando ponto em %s %s (%.4f, %.4f)%n",
+                    comVizinhos.getData(),
+                    comVizinhos.getHora(),
+                    comVizinhos.getLatitude(),
+                    comVizinhos.getLongitude());
+
+            fmt.format(
+                    "Temperatura original: %.2f | Temperatura interpolada: %.2f°C%n",
+                    comVizinhos.getTemperatura(),
+                    valorInterp);
+
+            fmt.format("%n");
+
+            String resultado = sb.toString();
+            fmt.close();
+
+            todasLinhas.add(resultado);
+        }
+
+        try (BufferedWriter bw = new BufferedWriter(
+                new FileWriter("saida_interpolacao.txt", true))) {
+
+            for (String linhaParaGravar : todasLinhas) {
+                bw.write(linhaParaGravar);
+            }
+            bw.flush();
+        } catch (IOException e) {
+            System.err.println("Erro ao gravar dados do dia " + data + ": " + e.getMessage());
         }
     }
 }

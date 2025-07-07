@@ -1,59 +1,70 @@
 package com.imd;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
+import java.util.PriorityQueue;
 
 public class InversoDistanciaPonderada {
 
-    public Ponto atualizarVizinhosMaisProximos(
-            Ponto alvo,
+    public Ponto atualizarVizinhosMaisProximos(Ponto alvo,
             List<Ponto> candidatos,
             int k) {
-        // 1) Criamos uma lista temporária para ordenar (não mexer na lista original)
-        List<Ponto> copia = new ArrayList<>(candidatos);
+        PriorityQueue<Ponto> heap = new PriorityQueue<>(k,
+                (p1, p2) -> {
+                    double d1 = distanciaGeografica(alvo.getLatitude(), alvo.getLongitude(),
+                            p1.getLatitude(), p1.getLongitude());
+                    double d2 = distanciaGeografica(alvo.getLatitude(), alvo.getLongitude(),
+                            p2.getLatitude(), p2.getLongitude());
+                    return Double.compare(d2, d1);
+                });
 
-        // 2) Ordena 'copia' pelo critério de distância geográfica ao 'alvo'
-        copia.sort(Comparator.comparingDouble(
-                v -> distanciaGeografica(
-                        alvo.getLatitude(), alvo.getLongitude(),
-                        v.getLatitude(), v.getLongitude())));
-
-        // 3) Se houver menos ou exatamente k candidatos, usamos todos; senão, pegamos
-        // subList(0, k)
-        List<Ponto> vizinhosK;
-        if (copia.size() <= k) {
-            vizinhosK = new ArrayList<>(copia);
-        } else {
-            // pega apenas os primeiros k, que são os mais próximos após a ordenação
-            vizinhosK = new ArrayList<>(copia.subList(0, k));
+        for (Ponto candidato : candidatos) {
+            if (heap.size() < k) {
+                heap.offer(candidato);
+            } else {
+                Ponto pior = heap.peek();
+                double dPior = distanciaGeografica(alvo.getLatitude(), alvo.getLongitude(),
+                        pior.getLatitude(), pior.getLongitude());
+                double dCand = distanciaGeografica(alvo.getLatitude(), alvo.getLongitude(),
+                        candidato.getLatitude(), candidato.getLongitude());
+                if (dCand < dPior) {
+                    heap.poll();
+                    heap.offer(candidato);
+                }
+            }
         }
 
-        // 4) Ajusta no próprio objeto 'alvo'
-        alvo.setPontosProximos(vizinhosK);
+        List<Ponto> vizinhosK = new ArrayList<>(heap);
 
+        alvo.setPontosProximos(vizinhosK);
         return alvo;
     }
 
     public double interpolarComVizinhos(Ponto alvo, int p) {
         double eps = 1e-9;
-        List<Double> iguais = new ArrayList<>();
+        double somaIguais = 0.0;
+        int contIguais = 0;
+
         for (Ponto viz : alvo.getPontosProximos()) {
-            double d = distanciaGeografica(alvo.getLatitude(), alvo.getLongitude(), viz.getLatitude(),
-                    viz.getLongitude());
+            double d = distanciaGeografica(
+                    alvo.getLatitude(), alvo.getLongitude(),
+                    viz.getLatitude(), viz.getLongitude());
             if (d < eps) {
-                iguais.add(viz.getTemperatura());
+                somaIguais += viz.getTemperatura();
+                contIguais++;
             }
         }
 
-        if (!iguais.isEmpty()) {
-            return iguais.stream().mapToDouble(Double::doubleValue).average().orElse(-9999.0);
+        if (contIguais > 0) {
+            return somaIguais / contIguais;
         }
 
-        double numerador = 0, denominador = 0;
+        double numerador = 0.0;
+        double denominador = 0.0;
         for (Ponto viz : alvo.getPontosProximos()) {
-            double d = distanciaGeografica(alvo.getLatitude(), alvo.getLongitude(), viz.getLatitude(),
-                    viz.getLongitude());
+            double d = distanciaGeografica(
+                    alvo.getLatitude(), alvo.getLongitude(),
+                    viz.getLatitude(), viz.getLongitude());
             double peso = 1.0 / Math.pow(d, p);
             numerador += peso * viz.getTemperatura();
             denominador += peso;
@@ -61,7 +72,7 @@ public class InversoDistanciaPonderada {
         return numerador / denominador;
     }
 
-    private double distanciaGeografica(double lat1, double lon1,
+    public static double distanciaGeografica(double lat1, double lon1,
             double lat2, double lon2) {
         double R = 6371.0;
         double dLat = Math.toRadians(lat2 - lat1);

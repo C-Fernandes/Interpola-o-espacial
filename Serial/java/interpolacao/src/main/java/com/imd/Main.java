@@ -1,8 +1,10 @@
 package com.imd;
 
+import java.io.InputStream;
 import java.net.URL;
+import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 
 public class Main {
     public static void main(String[] args) {
@@ -14,9 +16,12 @@ public class Main {
                 return;
             }
 
-            Path path = Paths.get(resource.toURI());
-            leitor.lerEInterpolar(path.toString());
-            System.out.println("Acabou");
+            Path tempFile = Files.createTempFile("dataset", ".csv");
+            try (InputStream is = resource.openStream()) {
+                Files.copy(is, tempFile, StandardCopyOption.REPLACE_EXISTING);
+                leitor.lerEInterpolar(tempFile.toString());
+                System.out.println("Acabou");
+            }
         } catch (Exception e) {
             e.printStackTrace();
         }

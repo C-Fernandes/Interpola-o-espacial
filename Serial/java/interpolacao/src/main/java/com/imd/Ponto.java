@@ -16,6 +16,15 @@ public class Ponto {
         this.hora = hora;
     }
 
+    public Ponto(Ponto original) {
+        this.latitude = original.latitude;
+        this.longitude = original.longitude;
+        this.temperatura = original.temperatura;
+        this.data = original.data;
+        this.hora = original.hora;
+        this.pontosProximos = new ArrayList<>(original.pontosProximos);
+    }
+
     public double getLatitude() {
         return this.latitude;
     }
@@ -62,5 +71,9 @@ public class Ponto {
 
     public void setPontosProximos(List<Ponto> pontosProximos) {
         this.pontosProximos = pontosProximos;
+    }
+
+    public Ponto shallowClone() {
+        return new Ponto(this.latitude, this.longitude, this.temperatura, this.data, this.hora);
     }
 }

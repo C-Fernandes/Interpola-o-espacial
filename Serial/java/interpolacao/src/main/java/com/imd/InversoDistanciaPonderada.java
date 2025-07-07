@@ -10,28 +10,18 @@ public class InversoDistanciaPonderada {
             Ponto alvo,
             List<Ponto> candidatos,
             int k) {
-        // 1) Criamos uma lista temporária para ordenar (não mexer na lista original)
         List<Ponto> copia = new ArrayList<>(candidatos);
-
-        // 2) Ordena 'copia' pelo critério de distância geográfica ao 'alvo'
         copia.sort(Comparator.comparingDouble(
                 v -> distanciaGeografica(
                         alvo.getLatitude(), alvo.getLongitude(),
                         v.getLatitude(), v.getLongitude())));
-
-        // 3) Se houver menos ou exatamente k candidatos, usamos todos; senão, pegamos
-        // subList(0, k)
         List<Ponto> vizinhosK;
         if (copia.size() <= k) {
             vizinhosK = new ArrayList<>(copia);
         } else {
-            // pega apenas os primeiros k, que são os mais próximos após a ordenação
             vizinhosK = new ArrayList<>(copia.subList(0, k));
         }
-
-        // 4) Ajusta no próprio objeto 'alvo'
         alvo.setPontosProximos(vizinhosK);
-
         return alvo;
     }
 
@@ -61,7 +51,7 @@ public class InversoDistanciaPonderada {
         return numerador / denominador;
     }
 
-    private double distanciaGeografica(double lat1, double lon1,
+    public static double distanciaGeografica(double lat1, double lon1,
             double lat2, double lon2) {
         double R = 6371.0;
         double dLat = Math.toRadians(lat2 - lat1);

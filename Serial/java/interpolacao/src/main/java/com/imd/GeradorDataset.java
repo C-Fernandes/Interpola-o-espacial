@@ -19,7 +19,6 @@ public class GeradorDataset {
         Random random = new Random();
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
-        // Definindo 24 pontos fixos distintos (latitude e longitude)
         double[][] localizacoes = new double[pontosGeograficos][2];
         for (int i = 0; i < pontosGeograficos; i++) {
             double lat = -10.0 + i * 0.5;
@@ -35,7 +34,7 @@ public class GeradorDataset {
 
             for (int dia = 0; dia < dias; dia++) {
                 LocalDate data = dataInicial.plusDays(dia);
-                String dataStr = data.format(formatter); // formato yyyy-MM-dd
+                String dataStr = data.format(formatter);
 
                 for (int hora = 0; hora < leiturasPorDia; hora++) {
                     String horaStr = String.format("%02d:00", hora);

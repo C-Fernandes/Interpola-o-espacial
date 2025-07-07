@@ -7,8 +7,8 @@ defmodule IdwApp.MixProject do
       version: "0.1.0",
       elixir: "~> 1.12",
       start_permanent: Mix.env() == :prod,
-      deps: [],
-      # se quiser gerar um executável com mix escript.build:
+      # ← aqui
+      deps: deps(),
       escript: [main_module: Idw]
     ]
   end
@@ -16,6 +16,13 @@ defmodule IdwApp.MixProject do
   def application do
     [
       extra_applications: [:logger]
+    ]
+  end
+
+  defp deps do
+    [
+      {:benchee, "~> 1.1", only: :dev}
+      # outras deps…
     ]
   end
 end
