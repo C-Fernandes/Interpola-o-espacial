@@ -6,6 +6,8 @@ dataset.csv
 
 *.csv
 *.txt
+*.jfr
+*.jar
 # Ignorar pastas de build do Maven e Gradle
 /target/
 /build/
