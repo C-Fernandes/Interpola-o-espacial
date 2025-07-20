@@ -120,7 +120,7 @@ public class IDWBenchmark {
 
     @Benchmark
     public void benchmarkLerEInterpolar(EstadoDoBenchmark estado, Blackhole bh) {
-        // Usa a instância de leitor do estado.
+
         estado.leitor.lerEInterpolar(estado.caminhoArquivoCSVTemporario);
         File arquivoDeSaidaReal = new File("saida_interpolacao.txt");
         if (arquivoDeSaidaReal.exists()) {

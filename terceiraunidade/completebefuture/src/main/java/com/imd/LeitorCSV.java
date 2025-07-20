@@ -6,8 +6,13 @@ import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -17,15 +22,13 @@ import java.util.stream.Collectors;
 
 public class LeitorCSV {
 
-    // 1) Executor para interpolação: pool fixo de platform threads
     private final ExecutorService interpExecutor = Executors
             .newFixedThreadPool(Runtime.getRuntime().availableProcessors());
-
-    // 2) Executor para escrita em arquivo: cada tarefa em uma virtual thread
     private final ExecutorService ioExecutor = Executors.newVirtualThreadPerTaskExecutor();
+    private final Object lockArquivo = new Object();
 
     private final InversoDistanciaPonderada idw = new InversoDistanciaPonderada();
-    private final int p = 2; // expoente
+    private final int p = 2; // expoente de IDW
     private final int k = 5; // número de vizinhos
 
     public void lerEInterpolar(String caminhoCSV) {
@@ -33,11 +36,12 @@ public class LeitorCSV {
         List<Ponto> pontosValidos = new ArrayList<>();
         String dataMomento = "";
 
-        try (BufferedReader br = new BufferedReader(new FileReader(caminhoCSV))) {
-
+        try (BufferedReader br = new BufferedReader(new FileReader(caminhoCSV));
+                BufferedWriter bw = new BufferedWriter(
+                        new FileWriter("saida_interpolacao.txt", true))) {
             br.readLine();
-
             String linha;
+
             while ((linha = br.readLine()) != null) {
                 String[] campos = linha.split(",");
 
@@ -52,7 +56,17 @@ public class LeitorCSV {
                 if (dataMomento.isEmpty()) {
                     dataMomento = data;
                 } else if (!dataMomento.equals(data)) {
-                    processarLote(dataMomento, precisaInterpolar, pontosValidos);
+                    String finalData = dataMomento;
+                    List<Ponto> finalInterp = new ArrayList<>(precisaInterpolar);
+                    List<Ponto> finalValidos = new ArrayList<>(pontosValidos);
+
+                    ioExecutor.submit(() -> {
+                        try {
+                            processarLote(finalData, finalInterp, finalValidos, bw);
+                        } catch (IOException e) {
+                            throw new RuntimeException(e);
+                        }
+                    });
                     precisaInterpolar.clear();
                     pontosValidos.clear();
                     dataMomento = data;
@@ -66,87 +80,78 @@ public class LeitorCSV {
             }
 
             if (!precisaInterpolar.isEmpty() && !pontosValidos.isEmpty()) {
-                processarLote(dataMomento, precisaInterpolar, pontosValidos);
+                String finalData = dataMomento;
+                List<Ponto> finalInterp = new ArrayList<>(precisaInterpolar);
+                List<Ponto> finalValidos = new ArrayList<>(pontosValidos);
+                processarLote(finalData, finalInterp, finalValidos, bw);
             }
 
         } catch (IOException e) {
             System.err.println("Erro ao ler arquivo CSV: " + e.getMessage());
         } finally {
-            System.out.println("Iniciando desligamento do pool de interpolação...");
             interpExecutor.shutdown();
             try {
-                if (!interpExecutor.awaitTermination(60, TimeUnit.MINUTES)) {
-                    System.err.println("Pool de interpolação não terminou no tempo esperado. Forçando o desligamento.");
+                if (!interpExecutor.awaitTermination(2, TimeUnit.MINUTES)) {
                     interpExecutor.shutdownNow();
                 }
             } catch (InterruptedException e) {
-                System.err.println("A espera pelo término do pool de interpolação foi interrompida.");
-                interpExecutor.shutdownNow();
                 Thread.currentThread().interrupt();
             }
-            System.out.println("Pool de interpolação desligado.");
-
-            System.out.println("Iniciando desligamento do pool de I/O...");
-            ioExecutor.shutdown();
-            try {
-                if (!ioExecutor.awaitTermination(60, TimeUnit.MINUTES)) {
-                    System.err.println("Pool de I/O não terminou no tempo esperado. Forçando o desligamento.");
-                    ioExecutor.shutdownNow(); // Tenta cancelar as tarefas em execução.
-                }
-            } catch (InterruptedException e) {
-                System.err.println("A espera pelo término do pool de I/O foi interrompida.");
-                ioExecutor.shutdownNow();
-                Thread.currentThread().interrupt();
-            }
-            System.out.println("Pool de I/O desligado.");
         }
     }
 
     public void processarLote(
-            String data,
-            List<Ponto> listaInterp,
-            List<Ponto> listaValidos) {
+            String data, List<Ponto> listaInterp, List<Ponto> listaValidos, BufferedWriter bw) throws IOException {
 
-        // 1) Cria uma lista de CompletableFuture para as tarefas de interpolação
-        List<CompletableFuture<String>> futures = listaInterp.stream()
-                .map(alvo -> CompletableFuture.supplyAsync(() -> {
-                    List<Ponto> candidatos = listaValidos.stream()
-                            .filter(v -> v.getHora().equals(alvo.getHora()))
-                            .collect(Collectors.toList());
+        Map<String, List<Ponto>> mapaPorHora = new HashMap<>();
+        for (Ponto pv : listaValidos) {
+            mapaPorHora.computeIfAbsent(pv.getHora(), h -> new ArrayList<>()).add(pv);
+        }
+        List<CompletableFuture<String>> interpolationTasks = new ArrayList<>(listaInterp.size());
+        for (Ponto alvo : listaInterp) {
 
-                    Ponto comVizinhos = idw.atualizarVizinhosMaisProximos(alvo, candidatos, k);
-                    double valorInterp = idw.interpolarComVizinhos(comVizinhos, p);
+            CompletableFuture<String> future = CompletableFuture.supplyAsync(() -> {
+                List<Ponto> candidatos = mapaPorHora.getOrDefault(alvo.getHora(), Collections.emptyList());
 
-                    return String.format(
-                            "Ponto: %s %s (%.4f, %.4f)%n | Temperatura interpolada: %.2f°C%n",
-                            comVizinhos.getData(),
-                            comVizinhos.getHora(),
-                            comVizinhos.getLatitude(),
-                            comVizinhos.getLongitude(),
-                            valorInterp);
-                }, interpExecutor) // Submete ao executor de interpolação (CPU-bound)
-                        .exceptionally(ex -> { // Tratamento de erro para cada tarefa
-                            System.err.println("Erro ao processar interpolação: " + ex.getMessage());
-                            return ">> Erro na interpolação deste ponto.\n";
-                        }))
-                .collect(Collectors.toList());
+                Ponto comVizinhos = idw.atualizarVizinhosMaisProximos(alvo, candidatos, k);
+                double valorInterp = idw.interpolarComVizinhos(comVizinhos, p);
 
-        CompletableFuture<Void> allOf = CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
+                return String.format(
+                        "Ponto: %s %s (%.4f, %.4f)%n" +
+                                " | Temperatura interpolada: %.2f°C%n",
+                        comVizinhos.getData(),
+                        comVizinhos.getHora(),
+                        comVizinhos.getLatitude(),
+                        comVizinhos.getLongitude(),
+                        valorInterp);
+            }, interpExecutor) // Indica que esta parte será executada pelo interpExecutor
+                    .exceptionally(ex -> {
+                        // Trata exceções da interpolação aqui, se desejar retornar um valor padrão ou
+                        // logar
+                        System.err.println("Erro durante a interpolação para o ponto " + alvo.getLatitude() + ","
+                                + alvo.getLongitude() + ": " + ex.getMessage());
+                        return "Ponto: " + alvo.getData() + " " + alvo.getHora() + " (Erro na interpolação)\n";
+                    });
+            interpolationTasks.add(future);
+        }
 
-        allOf.thenAcceptAsync(v -> {
-            List<String> todasLinhas = futures.stream()
-                    .map(CompletableFuture::join)
-                    .collect(Collectors.toList());
+        CompletableFuture<Void> allInterpolationsDone = CompletableFuture.allOf(
+                interpolationTasks.toArray(new CompletableFuture[0]));
 
-            try (BufferedWriter bw = new BufferedWriter(new FileWriter("saida_interpolacao.txt", true))) {
-                for (String linhaParaGravar : todasLinhas) {
-                    bw.write(linhaParaGravar);
+        allInterpolationsDone.thenRunAsync(() -> {
+            for (CompletableFuture<String> future : interpolationTasks) {
+                try {
+                    String resultado = future.join();
+                    synchronized (lockArquivo) {
+                        bw.write(resultado);
+                    }
+                } catch (CompletionException e) {
+                    System.err.println("Erro ao obter resultado final da interpolação: " + e.getCause().getMessage());
+                } catch (IOException e) {
+                    System.err.println("Erro de IO ao escrever resultado: " + e.getMessage());
+
                 }
-                bw.flush();
-            } catch (IOException e) {
-                System.err.println("Erro ao gravar dados do dia " + data + ": " + e.getMessage());
             }
         }, ioExecutor);
     }
-
 }
