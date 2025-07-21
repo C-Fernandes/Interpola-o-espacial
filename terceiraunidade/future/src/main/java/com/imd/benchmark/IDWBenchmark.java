@@ -1,12 +1,15 @@
 package com.imd.benchmark;
 
+import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileWriter;
-import java.io.IOException; // Certifique-se de que o pacote está correto para todas as suas classes
+import java.io.IOException;
 import java.io.PrintWriter;
+import java.io.Writer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
 import org.openjdk.jmh.annotations.Benchmark;
@@ -30,13 +33,12 @@ import org.openjdk.jmh.runner.options.OptionsBuilder;
 import com.imd.InversoDistanciaPonderada;
 import com.imd.LeitorCSV;
 import com.imd.Ponto;
-// import java.util.concurrent.Future; // Não é mais explicitamente necessário aqui
 
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 @Warmup(iterations = 4, time = 1, timeUnit = TimeUnit.SECONDS)
 @Measurement(iterations = 5, time = 1, timeUnit = TimeUnit.SECONDS)
-@Fork(value = 2, jvmArgsAppend = { "-Xms1G", "-Xmx1G" })
+@Fork(value = 2, jvmArgsAppend = { "-Xms4G", "-Xmx4G" })
 public class IDWBenchmark {
 
     @State(Scope.Benchmark)
@@ -50,7 +52,7 @@ public class IDWBenchmark {
         public int pExpoente = 2;
         public InversoDistanciaPonderada idw;
         private Random random = new Random(12345);
-
+        public BufferedWriter writer;
         public LeitorCSV leitor;
 
         @Setup(Level.Trial)
@@ -61,7 +63,7 @@ public class IDWBenchmark {
             String dataComum = "2024-01-01";
             String horaComum = "12:00:00";
             dataParaLoteBenchmark = dataComum;
-
+            this.writer = new BufferedWriter(Writer.nullWriter());
             for (int i = 0; i < 100; i++) {
                 listaDeCandidatosGeral.add(new Ponto(
                         -20 + random.nextDouble() * 10,
@@ -120,7 +122,7 @@ public class IDWBenchmark {
 
     @Benchmark
     public void benchmarkLerEInterpolar(EstadoDoBenchmark estado, Blackhole bh) {
-
+        // Usa a instância de leitor do estado.
         estado.leitor.lerEInterpolar(estado.caminhoArquivoCSVTemporario);
         File arquivoDeSaidaReal = new File("saida_interpolacao.txt");
         if (arquivoDeSaidaReal.exists()) {
@@ -131,11 +133,11 @@ public class IDWBenchmark {
     }
 
     @Benchmark
-    public void benchmarkProcessarLote(EstadoDoBenchmark estado, Blackhole bh) {
+    public void benchmarkProcessarLote(EstadoDoBenchmark estado, Blackhole bh)
+            throws IOException, InterruptedException, ExecutionException {
         List<Ponto> alvosParaLote = new ArrayList<>(estado.pontosAlvoParaLoteBenchmark);
         List<Ponto> validosParaLote = new ArrayList<>(estado.listaDeCandidatosGeral);
-
-        estado.leitor.processarLote(estado.dataParaLoteBenchmark, alvosParaLote, validosParaLote);
+        estado.leitor.processarLote(estado.dataParaLoteBenchmark, alvosParaLote, validosParaLote, estado.writer);
 
         bh.consume(alvosParaLote);
         bh.consume(validosParaLote);

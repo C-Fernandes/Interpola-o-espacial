@@ -1,74 +1,65 @@
 package com.imd;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.RecursiveTask;
+import java.util.Map;
 
 public class InterpolationTask extends RecursiveTask<List<String>> {
 
+    private static final int SEQUENTIAL_THRESHOLD = 5;
+
     private final List<Ponto> pointsToInterpolate;
-    private final List<Ponto> validPoints;
+    private final Map<String, List<Ponto>> validPointsByHour;
     private final InversoDistanciaPonderada idw;
+    private final String batchDate;
     private final int p;
     private final int k;
 
-    private static final int SEQUENTIAL_THRESHOLD = 100;
-
-    public InterpolationTask(List<Ponto> pointsToInterpolate, List<Ponto> validPoints, int k, int p,
-            InversoDistanciaPonderada idw) {
+    public InterpolationTask(List<Ponto> pointsToInterpolate, Map<String, List<Ponto>> validPointsByHour,
+            String batchDate, InversoDistanciaPonderada idw, int p, int k) {
         this.pointsToInterpolate = pointsToInterpolate;
-        this.validPoints = validPoints;
-        this.k = k;
-        this.p = p;
+        this.validPointsByHour = validPointsByHour;
+        this.batchDate = batchDate;
         this.idw = idw;
+        this.p = p;
+        this.k = k;
     }
 
     @Override
     protected List<String> compute() {
         if (pointsToInterpolate.size() <= SEQUENTIAL_THRESHOLD) {
             return computeDirectly();
-        } else {
-            int mid = pointsToInterpolate.size() / 2;
-
-            InterpolationTask leftTask = new InterpolationTask(
-                    pointsToInterpolate.subList(0, mid), validPoints, k, p, idw);
-
-            InterpolationTask rightTask = new InterpolationTask(
-                    pointsToInterpolate.subList(mid, pointsToInterpolate.size()), validPoints, k, p, idw);
-
-            // Envia a primeira subtarefa para execução assíncrona. [cite: 84, 85, 87]
-            leftTask.fork();
-
-            // Executa a segunda subtarefa na thread atual.
-            List<String> rightResult = rightTask.compute();
-
-            // Aguarda o resultado da primeira subtarefa e o obtém. [cite: 93, 94, 95]
-            List<String> leftResult = leftTask.join();
-
-            // Combina os resultados.
-            leftResult.addAll(rightResult);
-            return leftResult;
         }
+        int middle = pointsToInterpolate.size() / 2;
+        InterpolationTask subtask1 = new InterpolationTask(
+                pointsToInterpolate.subList(0, middle),
+                validPointsByHour, batchDate, idw, p, k);
+        InterpolationTask subtask2 = new InterpolationTask(
+                pointsToInterpolate.subList(middle, pointsToInterpolate.size()),
+                validPointsByHour, batchDate, idw, p, k);
+        subtask1.fork();
+        List<String> result2 = subtask2.compute();
+        List<String> result1 = subtask1.join();
+        List<String> combinedResult = new ArrayList<>(result1);
+        combinedResult.addAll(result2);
+        return combinedResult;
     }
 
     private List<String> computeDirectly() {
         List<String> results = new ArrayList<>();
-        for (Ponto alvo : pointsToInterpolate) {
-            List<Ponto> candidatos = new ArrayList<>();
-            candidatos.addAll(validPoints);
+        for (Ponto target : pointsToInterpolate) {
+            List<Ponto> candidates = validPointsByHour.getOrDefault(target.getHora(), Collections.emptyList());
+            Ponto pointWithNeighbors = idw.atualizarVizinhosMaisProximos(target, candidates, k);
+            double interpolatedValue = idw.interpolarComVizinhos(pointWithNeighbors, p);
 
-            Ponto comVizinhos = idw.atualizarVizinhosMaisProximos(alvo, candidatos, k);
-            double valorInterp = idw.interpolarComVizinhos(comVizinhos, p);
-
-            String resultado = String.format(
-                    "Ponto: %s %s (%.4f, %.4f)%n" +
-                            " | Temperatura interpolada: %.2f°C%n",
-                    comVizinhos.getData(),
-                    comVizinhos.getHora(),
-                    comVizinhos.getLatitude(),
-                    comVizinhos.getLongitude(),
-                    valorInterp);
-            results.add(resultado);
+            String formattedResult = String.format(
+                    "Ponto: %s %s (%.4f, %.4f)%n | Temperatura interpolada: %.2f°C%n",
+                    batchDate, pointWithNeighbors.getHora(), pointWithNeighbors.getLatitude(),
+                    pointWithNeighbors.getLongitude(),
+                    interpolatedValue);
+            results.add(formattedResult);
         }
         return results;
     }

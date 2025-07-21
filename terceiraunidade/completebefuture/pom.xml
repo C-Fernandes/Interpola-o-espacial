@@ -6,7 +6,7 @@
 
     <modelVersion>4.0.0</modelVersion>
     <groupId>com.imd</groupId>
-    <artifactId>completebefuture</artifactId>
+    <artifactId>completableFuture</artifactId>
     <version>1.0-SNAPSHOT</version>
     <packaging>jar</packaging>
 

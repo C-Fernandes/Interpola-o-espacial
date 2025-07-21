@@ -1,0 +1,13 @@
+dontinline,*.*_all_jmhStub
+dontinline,*.*_avgt_jmhStub
+dontinline,*.*_sample_jmhStub
+dontinline,*.*_ss_jmhStub
+dontinline,*.*_thrpt_jmhStub
+inline,com/imd/benchmark/IDWBenchmark$EstadoDoBenchmark.setupInvocation
+inline,com/imd/benchmark/IDWBenchmark$EstadoDoBenchmark.setupTrial
+inline,com/imd/benchmark/IDWBenchmark$EstadoDoBenchmark.tearDownTrial
+inline,com/imd/benchmark/IDWBenchmark.benchmarkAtualizarVizinhos
+inline,com/imd/benchmark/IDWBenchmark.benchmarkDistanciaGeografica
+inline,com/imd/benchmark/IDWBenchmark.benchmarkInterpolarComVizinhos
+inline,com/imd/benchmark/IDWBenchmark.benchmarkLerEInterpolar
+inline,com/imd/benchmark/IDWBenchmark.benchmarkProcessarLote
