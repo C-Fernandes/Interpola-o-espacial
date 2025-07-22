@@ -8,7 +8,7 @@ import java.util.Map;
 
 public class InterpolationTask extends RecursiveTask<List<String>> {
 
-    private static final int SEQUENTIAL_THRESHOLD = 5;
+    private static final int SEQUENTIAL_THRESHOLD = 10;
 
     private final List<Ponto> pointsToInterpolate;
     private final Map<String, List<Ponto>> validPointsByHour;

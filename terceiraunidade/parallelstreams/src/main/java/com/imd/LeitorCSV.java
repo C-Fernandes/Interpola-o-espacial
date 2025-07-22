@@ -1,10 +1,5 @@
 package com.imd;
 
-import java.io.BufferedReader;
-import java.io.BufferedWriter;
-import java.io.FileReader;
-import java.io.FileWriter;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -77,25 +72,23 @@ public class LeitorCSV {
         Map<String, List<Ponto>> mapaPorHora = listaValidos.stream()
                 .collect(Collectors.groupingBy(Ponto::getHora));
 
-        listaInterp.parallelStream().forEach(alvo -> {
-            List<Ponto> candidatos = mapaPorHora.getOrDefault(alvo.getHora(), Collections.emptyList());
-            Ponto comVizinhos = idw.atualizarVizinhosMaisProximos(alvo, candidatos, k);
-            double valorInterp = idw.interpolarComVizinhos(comVizinhos, p);
+        List<String> resultados = listaInterp.parallelStream()
+                .map(alvo -> {
+                    List<Ponto> candidatos = mapaPorHora.getOrDefault(alvo.getHora(), Collections.emptyList());
+                    Ponto comVizinhos = idw.atualizarVizinhosMaisProximos(alvo, candidatos, k);
+                    double valorInterp = idw.interpolarComVizinhos(comVizinhos, p);
 
-            String resultado = String.format(
-                    "Ponto: %s %s (%.4f, %.4f)%n | Temperatura interpolada: %.2f°C%n",
-                    data, alvo.getHora(), alvo.getLatitude(), alvo.getLongitude(), valorInterp);
-
-            // A escrita no arquivo ainda precisa ser sincronizada para evitar corrupção
-            try {
-                synchronized (lockArquivo) {
-                    bw.write(resultado);
-                }
-            } catch (IOException e) {
-                // Lança uma exceção não verificada, pois forEach não pode lançar exceções
-                // verificadas
-                throw new UncheckedIOException(e);
+                    return String.format(
+                            "Ponto: %s %s (%.4f, %.4f)%n | Temperatura interpolada: %.2f°C%n",
+                            data, alvo.getHora(), alvo.getLatitude(), alvo.getLongitude(), valorInterp);
+                })
+                .collect(Collectors.toList());
+        try {
+            for (String resultado : resultados) {
+                bw.write(resultado);
             }
-        });
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
     }
 }
